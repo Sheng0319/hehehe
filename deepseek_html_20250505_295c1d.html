@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>加权平均分计算器</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC&display=swap" rel="stylesheet" />
+  <style>
+    body {
+      font-family: 'Noto Sans SC', sans-serif;
+    }
+    tr.low-score {
+      background-color: #fee2e2;
+    }
+    input:focus, input:hover {
+      outline: none;
+      border-color: #3b82f6 !important;
+      box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+    }
+    .target-input {
+      border: 2px solid #d1d5db;
+      border-radius: 0.5rem;
+      padding: 0.5rem;
+      width: 80px;
+    }
+    .target-result {
+      font-weight: bold;
+      color: #3b82f6;
+    }
+    @media (max-width: 640px) {
+      .responsive-table th, .responsive-table td {
+        padding: 0.5rem;
+      }
+    }
+  </style>
+</head>
+<body class="bg-gray-100 min-h-screen p-4 md:p-6">
+  <div class="max-w-5xl mx-auto bg-white p-4 md:p-6 rounded-2xl shadow-lg">
+    <h1 class="text-xl md:text-2xl font-bold mb-4">📊 加权平均分计算器（含目标计算）</h1>
+
+    <div class="overflow-x-auto">
+      <table class="w-full table-auto mb-4 responsive-table" id="scoreTable">
+        <thead>
+          <tr class="bg-gray-200">
+            <th class="p-2 text-left">科目</th>
+            <th class="p-2 text-left">权重（节数）</th>
+            <th class="p-2 text-left">分数</th>
+            <th class="p-2 text-left">操作</th>
+          </tr>
+        </thead>
+        <tbody id="tableBody">
+          <!-- 自动填充科目 -->
+        </tbody>
+      </table>
+    </div>
+
+    <div class="flex flex-wrap gap-2 mb-6">
+      <button onclick="addRow()" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-xl transition-colors">
+        ➕ 添加项目
+      </button>
+      <button onclick="sortByScore()" class="bg-yellow-500 hover:bg-yellow-600 text-white px-4 py-2 rounded-xl transition-colors">
+        ⬆️ 分数排序
+      </button>
+    </div>
+
+    <!-- 计算结果区域 - 分成两栏布局 -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+      <!-- 左侧：当前平均分计算 -->
+      <div class="bg-gray-50 p-4 rounded-xl">
+        <h2 class="text-lg font-semibold mb-3 border-b pb-2">📌 当前成绩计算</h2>
+        <div class="text-lg mb-2">
+          <span class="font-medium">加权平均分：</span>
+          <span id="result" class="text-blue-600 text-xl">-</span>
+        </div>
+        <div class="text-gray-700 space-y-1">
+          <p>总节数：<span id="totalWeight" class="font-medium">-</span></p>
+          <p>加权总分：<span id="weightedSum" class="font-medium">-</span></p>
+          <p>已填写科目：<span id="filledCount" class="font-medium">0</span>/<span id="totalCount" class="font-medium">0</span></p>
+        </div>
+      </div>
+
+      <!-- 右侧：目标平均分计算 -->
+      <div class="bg-blue-50 p-4 rounded-xl">
+        <h2 class="text-lg font-semibold mb-3 border-b pb-2">🎯 目标成绩计算</h2>
+        <div class="flex items-center gap-2 mb-3">
+          <span>目标均分：</span>
+          <input type="number" id="targetScore" min="0" max="100" 
+                 class="target-input" placeholder="65">
+          <span>分</span>
+          <button onclick="calculateTarget()" 
+                  class="bg-green-500 hover:bg-green-600 text-white px-3 py-1 rounded-lg">
+            计算
+          </button>
+        </div>
+        <div id="targetResult" class="text-sm space-y-2">
+          <p class="text-gray-500">输入目标分数后点击计算</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="chart-container" style="position: relative; height: 300px; width: 100%">
+      <canvas id="scoreChart"></canvas>
+    </div>
+  </div>
+
+  <script>
+    // 常量配置
+    const MIN_SCORE = 0;
+    const MAX_SCORE = 100;
+    const LOW_SCORE_THRESHOLD = 50;
+    
+    // DOM 元素
+    const tableBody = document.getElementById('tableBody');
+    let chart = null;
+
+    // 初始数据
+    const initialSubjects = [
+      { subject: "数学", weight: 8, score: "" },
+      { subject: "马来文", weight: 6, score: "" },
+      { subject: "英文", weight: 6, score: "" },
+      { subject: "华文", weight: 6, score: "" },
+      { subject: "化学", weight: 5, score: "" },
+      { subject: "物理", weight: 5, score: "" },
+      { subject: "生物", weight: 5, score: "" },
+    ];
+
+    // 添加新行
+    function addRow(subject = '', weight = '', score = '') {
+      const row = document.createElement('tr');
+      row.className = 'hover:bg-gray-50';
+      row.innerHTML = `
+        <td class="border"><input type="text" value="${subject}" class="subject w-full p-2 border rounded" placeholder="科目名称"/></td>
+        <td class="border"><input type="number" min="0" value="${weight}" class="weight w-full p-2 border rounded" placeholder="0"/></td>
+        <td class="border"><input type="number" min="${MIN_SCORE}" max="${MAX_SCORE}" value="${score}" class="score w-full p-2 border rounded" placeholder="0-100"/></td>
+        <td class="border"><button onclick="removeRow(this)" class="text-red-500 hover:text-red-700 px-2 py-1 rounded transition-colors">🗑 删除</button></td>
+      `;
+      tableBody.appendChild(row);
+      
+      // 为输入框添加事件监听
+      row.querySelectorAll('input').forEach(input => {
+        input.addEventListener('input', handleInputChange);
+        input.addEventListener('blur', validateInput);
+      });
+      
+      update();
+    }
+
+    // 移除行
+    function removeRow(button) {
+      if (tableBody.querySelectorAll('tr').length <= 1) {
+        alert("至少需要保留一项！");
+        return;
+      }
+      button.closest('tr').remove();
+      update();
+    }
+
+    // 输入变化处理
+    function handleInputChange() {
+      update();
+    }
+
+    // 输入验证
+    function validateInput(e) {
+      const input = e.target;
+      if (input.classList.contains('score')) {
+        const value = parseFloat(input.value);
+        if (value < MIN_SCORE) input.value = MIN_SCORE;
+        if (value > MAX_SCORE) input.value = MAX_SCORE;
+      } else if (input.classList.contains('weight')) {
+        const value = parseFloat(input.value);
+        if (value < 0) input.value = 0;
+      }
+      update();
+    }
+
+    // 按分数排序
+    function sortByScore() {
+      const rows = Array.from(tableBody.querySelectorAll('tr'));
+      if (rows.length === 0) return;
+      
+      rows.sort((a, b) => {
+        const scoreA = parseFloat(a.querySelector('.score').value) || 0;
+        const scoreB = parseFloat(b.querySelector('.score').value) || 0;
+        return scoreB - scoreA;
+      });
+      
+      tableBody.innerHTML = '';
+      rows.forEach(row => tableBody.appendChild(row));
+      update();
+    }
+
+    // 更新计算结果和图表
+    function update() {
+      const rows = tableBody.querySelectorAll('tr');
+      let totalWeight = 0;
+      let weightedSum = 0;
+      let filledCount = 0;
+      const subjects = [];
+      const scores = [];
+
+      rows.forEach(row => {
+        const subject = row.querySelector('.subject').value || '未命名科目';
+        const weight = parseFloat(row.querySelector('.weight').value) || 0;
+        const scoreInput = row.querySelector('.score');
+        const score = parseFloat(scoreInput.value);
+
+        // 标记低分科目
+        if (!isNaN(score) && score < LOW_SCORE_THRESHOLD) {
+          row.classList.add('low-score');
+        } else {
+          row.classList.remove('low-score');
+        }
+
+        totalWeight += weight;
+        
+        if (!isNaN(score) && score >= 0) {
+          weightedSum += weight * score;
+          filledCount++;
+        }
+
+        subjects.push(subject);
+        scores.push(isNaN(score) ? null : score);
+      });
+
+      // 更新计算结果
+      const result = totalWeight && filledCount > 0 ? (weightedSum / totalWeight).toFixed(2) : '-';
+      document.getElementById('result').textContent = result;
+      document.getElementById('totalWeight').textContent = totalWeight;
+      document.getElementById('weightedSum').textContent = weightedSum.toFixed(2);
+      document.getElementById('filledCount').textContent = filledCount;
+      document.getElementById('totalCount').textContent = rows.length;
+
+      // 只在有数据时绘制图表
+      if (subjects.length > 0 && scores.some(score => score !== null)) {
+        drawChart(subjects, scores);
+      } else if (chart) {
+        chart.destroy();
+        chart = null;
+      }
+
+      // 如果目标分数已输入，自动重新计算
+      const targetScore = document.getElementById('targetScore').value;
+      if (targetScore && !isNaN(targetScore)) {
+        calculateTarget();
+      }
+    }
+
+    // 目标平均分计算
+    function calculateTarget() {
+      const targetScore = parseFloat(document.getElementById('targetScore').value);
+      if (isNaN(targetScore) || targetScore < 0 || targetScore > 100) {
+        document.getElementById('targetResult').innerHTML = `
+          <p class="text-red-500">请输入有效的目标分数(0-100)</p>
+        `;
+        return;
+      }
+
+      const rows = tableBody.querySelectorAll('tr');
+      let totalWeight = 0;
+      let fixedWeight = 0;
+      let fixedSum = 0;
+      let variableWeight = 0;
+      const variableSubjects = [];
+
+      // 分析当前数据
+      rows.forEach(row => {
+        const subject = row.querySelector('.subject').value || '未命名科目';
+        const weight = parseFloat(row.querySelector('.weight').value) || 0;
+        const scoreInput = row.querySelector('.score');
+        const score = parseFloat(scoreInput.value);
+        
+        totalWeight += weight;
+        
+        if (!isNaN(score) && score >= 0) {
+          fixedWeight += weight;
+          fixedSum += weight * score;
+        } else {
+          variableWeight += weight;
+          variableSubjects.push({
+            element: scoreInput,
+            subject: subject,
+            weight: weight
+          });
+        }
+      });
+
+      // 计算结果
+      if (variableWeight === 0) {
+        const currentAvg = fixedSum / totalWeight;
+        if (currentAvg >= targetScore) {
+          document.getElementById('targetResult').innerHTML = `
+            <p class="text-green-500">✅ 已超过目标！当前均分 ${currentAvg.toFixed(2)} 分 ≥ 目标 ${targetScore} 分</p>
+          `;
+        } else {
+          document.getElementById('targetResult').innerHTML = `
+            <p class="text-red-500">❌ 已填写全部科目，当前均分 ${currentAvg.toFixed(2)} 分 < 目标 ${targetScore} 分</p>
+          `;
+        }
+        return;
+      }
+
+      const requiredSum = targetScore * totalWeight;
+      const remainingSum = requiredSum - fixedSum;
+      let minScore = remainingSum / variableWeight;
+
+      // 显示结果
+      if (minScore > 100) {
+        const maxPossible = (fixedSum + variableWeight * 100) / totalWeight;
+        document.getElementById('targetResult').innerHTML = `
+          <p class="text-red-500">❌ 无法达到目标！</p>
+          <p>即使其他科目都得100分，最高也只能达到 ${maxPossible.toFixed(2)} 分</p>
+        `;
+      } else if (minScore < 0) {
+        const currentPossible = fixedSum / (fixedWeight || totalWeight);
+        document.getElementById('targetResult').innerHTML = `
+          <p class="text-green-500">✅ 已超过目标！</p>
+          <p>当前已填写科目均分 ${currentPossible.toFixed(2)} 分 > 目标 ${targetScore} 分</p>
+        `;
+      } else {
+        minScore = Math.max(0, minScore);
+        let resultHTML = `
+          <p>要达到目标 <span class="target-result">${targetScore}</span> 分：</p>
+          <p class="my-2">未填写科目需要平均至少：<span class="target-result text-xl">${minScore.toFixed(2)} 分</span></p>
+          <div class="bg-white p-2 rounded mt-2">
+            <p class="font-medium mb-1">各科要求：</p>
+        `;
+        
+        variableSubjects.forEach(item => {
+          resultHTML += `
+            <div class="flex justify-between py-1 border-b">
+              <span>${item.subject}</span>
+              <span class="font-medium">≥ ${minScore.toFixed(2)} 分</span>
+            </div>
+          `;
+          // 在输入框中显示建议分数（不实际修改值）
+          item.element.placeholder = `至少${minScore.toFixed(2)}`;
+        });
+        
+        resultHTML += `</div>`;
+        document.getElementById('targetResult').innerHTML = resultHTML;
+      }
+    }
+
+    // 绘制雷达图
+    function drawChart(labels, data) {
+      const ctx = document.getElementById('scoreChart').getContext('2d');
+      
+      // 处理null值（未填写的科目）
+      const chartData = data.map(score => score === null ? 0 : score);
+      const backgroundColors = data.map(score => 
+        score === null ? 'rgba(200, 200, 200, 0.2)' : 'rgba(59, 130, 246, 0.4)'
+      );
+      const borderColors = data.map(score => 
+        score === null ? 'rgba(200, 200, 200, 1)' : 'rgba(59, 130, 246, 1)'
+      );
+      
+      if (chart) {
+        // 更新现有图表数据
+        chart.data.labels = labels;
+        chart.data.datasets[0].data = chartData;
+        chart.data.datasets[0].backgroundColor = backgroundColors;
+        chart.data.datasets[0].borderColor = borderColors;
+        chart.update();
+        return;
+      }
+      
+      chart = new Chart(ctx, {
+        type: 'radar',
+        data: {
+          labels: labels,
+          datasets: [{
+            label: '分数',
+            data: chartData,
+            backgroundColor: backgroundColors,
+            borderColor: borderColors,
+            borderWidth: 2,
+            pointBackgroundColor: borderColors,
+            pointRadius: 4
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            r: {
+              beginAtZero: true,
+              max: 100,
+              ticks: {
+                stepSize: 20
+              },
+              pointLabels: {
+                font: {
+                  size: 12
+                }
+              }
+            }
+          },
+          plugins: {
+            legend: {
+              display: false
+            },
+            tooltip: {
+              callbacks: {
+                label: function(context) {
+                  return context.raw === 0 ? '未填写' : `${context.raw} 分`;
+                }
+              }
+            }
+          }
+        }
+      });
+    }
+
+    // 初始化加载数据
+    function loadInitialData() {
+      initialSubjects.forEach(subject => addRow(subject.subject, subject.weight, subject.score));
+    }
+
+    // 页面加载完成后初始化
+    window.addEventListener('DOMContentLoaded', loadInitialData);
+  </script>
+</body>
+</html>
